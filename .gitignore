@@ -1,0 +1,20 @@
+# 忽略 Python 编译缓存
+__pycache__/
+*.pyc
+
+# 忽略 VS Code 配置文件夹
+.vscode/
+
+# 忽略本地生成的字幕日志
+subtitle_log.txt
+*.srt
+
+# 忽略虚拟环境 (万一有人把环境建在项目里)
+venv/
+env/
+.env
+
+# 忽略临时测试脚本 (如果你不想开源这几个测试文件)
+step1_listen.py
+step2_transcribe.py
+fix_dll.py

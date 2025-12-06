@@ -1,0 +1,17 @@
+# 核心 AI 库
+faster-whisper
+# 限制 numpy 版本，防止报错
+numpy<2.0.0
+
+# 音频录制库
+soundcard
+
+# 图形界面库
+PyQt6
+
+# 繁简转换工具
+zhconv
+
+# 显卡加速依赖 (Windows下必备)
+nvidia-cublas-cu12
+nvidia-cudnn-cu12
