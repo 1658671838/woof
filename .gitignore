@@ -18,3 +18,12 @@ env/
 step1_listen.py
 step2_transcribe.py
 fix_dll.py
+# --- 打包产生的临时文件 ---
+build/
+dist/
+*.spec
+
+# --- 用户配置与日志 (不要把你的个人配置传上去) ---
+config.json
+subtitle_export.txt
+subtitle_log.txt
