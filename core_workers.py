@@ -13,9 +13,12 @@ audio_queue = queue.Queue(maxsize=5)
 
 # --- 耳朵：录音线程 ---
 class AudioRecorderThread(QThread):
+    def __init__(self):
+        super().__init__()
+        self.is_running = True # 🛑 新增：运行状态标志
+
     def run(self):
         global audio_queue
-        # 重新初始化队列
         audio_queue = queue.Queue(maxsize=5)
         
         try:
@@ -26,14 +29,24 @@ class AudioRecorderThread(QThread):
             except: return 
 
         with mic.recorder(samplerate=SAMPLE_RATE) as recorder:
-            while True:
+            # 🛑 修改：不再是 while True，而是检查标志位
+            while self.is_running:
                 # 录制 3 秒
-                data = recorder.record(numframes=SAMPLE_RATE * 3)
-                data = data.mean(axis=1).squeeze()
-                if audio_queue.full():
-                    try: audio_queue.get_nowait()
-                    except: pass
-                audio_queue.put(data)
+                try:
+                    data = recorder.record(numframes=SAMPLE_RATE * 3)
+                    data = data.mean(axis=1).squeeze()
+                    if audio_queue.full():
+                        try: audio_queue.get_nowait()
+                        except: pass
+                    audio_queue.put(data)
+                except Exception as e:
+                    print(f"录音中断: {e}")
+                    break
+
+    # 🛑 新增：停止方法
+    def stop(self):
+        self.is_running = False
+        self.wait() # 等待线程安全结束
 
 # --- 大脑：AI 线程 ---
 class WhisperWorkerThread(QThread):
@@ -42,6 +55,7 @@ class WhisperWorkerThread(QThread):
     def __init__(self, config):
         super().__init__()
         self.config = config
+        self.is_running = True # 🛑 新增
 
     def run(self):
         try:
@@ -57,12 +71,14 @@ class WhisperWorkerThread(QThread):
             
             history = deque(maxlen=3)
 
-            while True:
-                if audio_queue.empty():
-                    time.sleep(0.1)
+            # 🛑 修改：检查标志位
+            while self.is_running:
+                # 如果队列空了，就休息一会，不要死循环空转
+                try:
+                    # timeout=1 表示等1秒，如果还没有数据就抛出Empty异常，继续下一轮循环检查 is_running
+                    audio_data = audio_queue.get(timeout=1) 
+                except queue.Empty:
                     continue
-                    
-                audio_data = audio_queue.get()
                 
                 try:
                     segments, info = model.transcribe(audio_data, language="zh", beam_size=5, condition_on_previous_text=False)
@@ -83,3 +99,8 @@ class WhisperWorkerThread(QThread):
 
         except Exception as e:
             self.update_text_signal.emit(f"❌ 错误: {str(e)}")
+
+    # 🛑 新增：停止方法
+    def stop(self):
+        self.is_running = False
+        self.wait()
