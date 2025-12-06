@@ -21,13 +21,16 @@
 ```bash
 git clone [https://github.com/你的用户名/仓库名.git](https://github.com/你的用户名/仓库名.git)
 cd 仓库名
-3. 安装依赖 (关键)
-Bash
+```
+
+### 3. 安装依赖 (关键)
+```Bash
 
 pip install -r requirements.txt
+```
 4. 启动
-Bash
-
+```Bash
 python main.py
+```
 ⚠️ 常见报错
 如果提示 cublas64_12.dll not found，请确保 pip 安装过程没有报错，且显卡驱动正常。
