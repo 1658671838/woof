@@ -1,10 +1,10 @@
 import sys
-import os  # 引入系统库
+import os
 from collections import deque
-from PyQt6.QtWidgets import (QWidget, QLabel, QVBoxLayout, QPushButton, QHBoxLayout, 
-                             QFrame, QApplication, QSizeGrip)
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QPushButton, QHBoxLayout, 
+                             QFrame, QApplication, QSizeGrip, QTextEdit)
 from PyQt6.QtCore import Qt, pyqtSignal, QPoint
-from PyQt6.QtGui import QFont, QFontMetrics
+from PyQt6.QtGui import QFont, QColor, QPalette, QTextCursor
 from core_workers import AudioRecorderThread, WhisperWorkerThread
 from core_utils import ConfigManager
 
@@ -16,27 +16,32 @@ class ResizableSubtitleWindow(QWidget):
         super().__init__()
         self.config = config
         
+        # 1. 窗口属性
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setMouseTracking(True)
         
+        # 2. 恢复尺寸
         w = config.get("window_width", 1000)
         h = config.get("window_height", 200)
         self.resize(w, h)
         
+        # 居中
         screen = QApplication.primaryScreen().geometry()
         self.move((screen.width() - self.width()) // 2, screen.height() - 300)
 
+        # 3. 初始化 UI
         self.setup_ui()
-        self.text_buffer = deque(maxlen=50) 
         self.start_threads()
         
+        # 4. 拖拽状态
         self.is_moving = False
         self.is_resizing = False
         self.drag_pos = QPoint()
         self.resize_edge = None
 
     def setup_ui(self):
+        # 背景容器
         self.container = QFrame(self)
         self.container.setStyleSheet("""
             QFrame {
@@ -46,13 +51,16 @@ class ResizableSubtitleWindow(QWidget):
             }
         """)
         
+        # 主布局
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.addWidget(self.container)
         
+        # 内部布局
         inner_layout = QVBoxLayout(self.container)
-        inner_layout.setContentsMargins(15, 10, 15, 15)
+        inner_layout.setContentsMargins(10, 5, 10, 10)
         
+        # --- 顶部栏 (关闭按钮) ---
         top_bar = QHBoxLayout()
         top_bar.addStretch()
         self.close_btn = QPushButton("×")
@@ -66,16 +74,29 @@ class ResizableSubtitleWindow(QWidget):
         top_bar.addWidget(self.close_btn)
         inner_layout.addLayout(top_bar)
         
-        self.label = QLabel("Waiting for audio...", self)
+        # --- 核心修改：使用 QTextEdit 代替 QLabel ---
+        self.text_area = QTextEdit(self)
+        self.text_area.setReadOnly(True) # 只读
+        
+        # 样式：透明背景，无边框
+        self.text_area.setStyleSheet("background: transparent; border: none;")
+        
+        # 设置字体
         font_size = self.config.get("font_size", 24)
-        self.current_font = QFont("Microsoft YaHei UI", font_size)
-        self.current_font.setBold(True)
-        self.label.setFont(self.current_font)
-        self.label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom)
-        self.label.setWordWrap(True)
-        self.label.setStyleSheet("color: #00FF7F; border: none;")
-        inner_layout.addWidget(self.label, 1)
+        font = QFont("Microsoft YaHei UI", font_size)
+        font.setBold(True)
+        self.text_area.setFont(font)
+        
+        # 关键：让鼠标事件穿透 TextEdit，这样按住文字也能拖动窗口
+        self.text_area.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        
+        # 隐藏滚动条 (看起来像纯文本，但其实是可滚动的)
+        self.text_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.text_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        
+        inner_layout.addWidget(self.text_area)
 
+        # 右下角手柄
         self.size_grip = QSizeGrip(self.container)
         self.size_grip.setStyleSheet("background-color: transparent;") 
 
@@ -89,30 +110,28 @@ class ResizableSubtitleWindow(QWidget):
 
     def add_text(self, text):
         if text.startswith("❌"):
-            self.label.setText(text)
-            self.label.setStyleSheet("color: #FF4444;")
+            # 如果出错，用红色显示
+            self.text_area.setTextColor(QColor("#FF4444"))
+            self.text_area.append(text)
         else:
-            self.label.setStyleSheet("color: #00FF7F;")
-            self.text_buffer.append(text)
-            self.refresh_display_content()
+            # 正常字幕，亮绿色
+            self.text_area.setTextColor(QColor("#00FF7F"))
+            self.text_area.append(text)
+            
+            # 自动滚动到底部
+            cursor = self.text_area.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+            self.text_area.setTextCursor(cursor)
 
-    def refresh_display_content(self):
-        if not self.text_buffer: return
-        fm = QFontMetrics(self.current_font)
-        line_height = fm.lineSpacing() + 5
-        available_height = self.container.height() - 55 
-        max_lines_possible = max(1, available_height // line_height)
-        lines_to_show = list(self.text_buffer)[-max_lines_possible:]
-        display_text = "\n".join(lines_to_show)
-        self.label.setText(display_text)
-
+    # --- 窗口大小改变 ---
     def resizeEvent(self, event):
         self.config["window_width"] = self.width()
         self.config["window_height"] = self.height()
+        # 保持手柄在右下角
         self.size_grip.move(self.width() - 20, self.height() - 20)
-        self.refresh_display_content()
         super().resizeEvent(event)
 
+    # --- 鼠标交互逻辑 (拖拽窗口) ---
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             edge = self.get_edge(event.pos())
@@ -138,15 +157,24 @@ class ResizableSubtitleWindow(QWidget):
         if self.is_resizing and event.buttons() == Qt.MouseButton.LeftButton:
             global_pos = event.globalPosition().toPoint()
             rect = self.geometry()
-            if "right" in self.resize_edge: rect.setWidth(global_pos.x() - rect.x())
-            if "bottom" in self.resize_edge: rect.setHeight(global_pos.y() - rect.y())
+            
+            # 只允许向右和向下改变大小，防止坐标错乱
+            if "right" in self.resize_edge:
+                rect.setWidth(global_pos.x() - rect.x())
+            if "bottom" in self.resize_edge:
+                rect.setHeight(global_pos.y() - rect.y())
+            
+            # 限制最小尺寸
             if rect.width() < 300: rect.setWidth(300)
-            if rect.height() < 80: rect.setHeight(80)
+            if rect.height() < 100: rect.setHeight(100)
+            
             self.setGeometry(rect)
             event.accept()
 
     def mouseReleaseEvent(self, event):
-        self.is_moving = False; self.is_resizing = False; self.resize_edge = None
+        self.is_moving = False
+        self.is_resizing = False
+        self.resize_edge = None
         ConfigManager.save_config(self.config)
 
     def get_edge(self, pos):
@@ -163,10 +191,6 @@ class ResizableSubtitleWindow(QWidget):
         return Qt.CursorShape.ArrowCursor
 
     def close_app(self):
-        # 1. 保存配置
         ConfigManager.save_config(self.config)
-        
-        # 2. 暴力退出：直接通知操作系统杀掉当前进程
-        # 这会跳过所有线程清理步骤，彻底解决 OleInitialize 报错
         print("正在强制关闭...")
         os._exit(0)
