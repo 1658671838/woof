@@ -4,7 +4,8 @@ __pycache__/
 
 # 忽略 VS Code 配置文件夹
 .vscode/
-
+models-*/
+.locks/
 # 忽略本地生成的字幕日志
 subtitle_log.txt
 *.srt
