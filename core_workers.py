@@ -11,11 +11,20 @@ from core_utils import SAMPLE_RATE
 # 全局音频队列
 audio_queue = queue.Queue(maxsize=5)
 
+# --- 🚫 幻觉词黑名单 ---
+# 如果识别出的文本包含这些词，直接丢弃
+BANNED_PHRASES = [
+    "字幕", "订阅", "微信", "QQ", "上传", "版权", 
+    "观看", "收看", "频道", "点赞", "作者", "视频",
+    "Amara.org", "Subtitle", "caption"
+]
+
 # --- 耳朵：录音线程 ---
 class AudioRecorderThread(QThread):
     def __init__(self):
         super().__init__()
-        self.is_running = True # 🛑 新增：运行状态标志
+        # 🛑 修正：Python 3.10+ 必须用这种写法
+        self.daemon = True 
 
     def run(self):
         global audio_queue
@@ -29,24 +38,17 @@ class AudioRecorderThread(QThread):
             except: return 
 
         with mic.recorder(samplerate=SAMPLE_RATE) as recorder:
-            # 🛑 修改：不再是 while True，而是检查标志位
-            while self.is_running:
-                # 录制 3 秒
+            while True:
                 try:
+                    # 录制 3 秒
                     data = recorder.record(numframes=SAMPLE_RATE * 3)
                     data = data.mean(axis=1).squeeze()
                     if audio_queue.full():
                         try: audio_queue.get_nowait()
                         except: pass
                     audio_queue.put(data)
-                except Exception as e:
-                    print(f"录音中断: {e}")
+                except Exception:
                     break
-
-    # 🛑 新增：停止方法
-    def stop(self):
-        self.is_running = False
-        self.wait() # 等待线程安全结束
 
 # --- 大脑：AI 线程 ---
 class WhisperWorkerThread(QThread):
@@ -55,7 +57,8 @@ class WhisperWorkerThread(QThread):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.is_running = True # 🛑 新增
+        # 🛑 修正：Python 3.10+ 必须用这种写法
+        self.daemon = True
 
     def run(self):
         try:
@@ -71,36 +74,37 @@ class WhisperWorkerThread(QThread):
             
             history = deque(maxlen=3)
 
-            # 🛑 修改：检查标志位
-            while self.is_running:
-                # 如果队列空了，就休息一会，不要死循环空转
+            while True:
                 try:
-                    # timeout=1 表示等1秒，如果还没有数据就抛出Empty异常，继续下一轮循环检查 is_running
-                    audio_data = audio_queue.get(timeout=1) 
-                except queue.Empty:
+                    audio_data = audio_queue.get()
+                except:
                     continue
                 
                 try:
                     segments, info = model.transcribe(audio_data, language="zh", beam_size=5, condition_on_previous_text=False)
                     for segment in segments:
                         text = segment.text.strip()
-                        if len(text) > 1 and text not in history:
-                            simple_text = zhconv.convert(text, 'zh-cn')
-                            self.update_text_signal.emit(simple_text)
-                            
-                            if save_log:
-                                t = time.strftime("%H:%M:%S")
-                                with open(log_file, "a", encoding="utf-8") as f:
-                                    f.write(f"[{t}] {simple_text}\n")
-                            
-                            history.append(text)
+                        
+                        # 过滤逻辑
+                        if len(text) < 2: continue
+                        if text in history: continue
+                        
+                        # 脏词过滤
+                        if any(banned in text for banned in BANNED_PHRASES):
+                            print(f"已拦截幻觉: {text}")
+                            continue
+
+                        simple_text = zhconv.convert(text, 'zh-cn')
+                        self.update_text_signal.emit(simple_text)
+                        
+                        if save_log:
+                            t = time.strftime("%H:%M:%S")
+                            with open(log_file, "a", encoding="utf-8") as f:
+                                f.write(f"[{t}] {simple_text}\n")
+                        
+                        history.append(text)
                 except Exception as e:
                     print(f"推理警告: {e}")
 
         except Exception as e:
             self.update_text_signal.emit(f"❌ 错误: {str(e)}")
-
-    # 🛑 新增：停止方法
-    def stop(self):
-        self.is_running = False
-        self.wait()
